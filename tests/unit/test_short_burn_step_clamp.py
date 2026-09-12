@@ -9,7 +9,14 @@ rocket on the pad.
 
 import numpy as np
 
-from rocketpy import Environment, Flight, Rocket, SolidMotor
+from rocketpy import (
+    CompositeMotor,
+    Environment,
+    Flight,
+    MotorPlacement,
+    Rocket,
+    SolidMotor,
+)
 
 
 def _make_short_burn_motor():
@@ -44,9 +51,8 @@ def _make_short_burn_motor():
 
 
 def _make_near_instant_burn_motor():
-    # Degenerate "empty" placeholder: positive-but-negligible impulse over a
-    # near-zero burn (burn_out_time=1e-10 s). burn_out/10 = 1e-11 s, which the
-    # burn-phase clamp must NOT impose as max_step (it would stall the solver).
+    # Placeholder with negligible impulse over a 1e-10 s burn; the clamp must
+    # not impose burn_out/10 = 1e-11 s as max_step.
     return SolidMotor(
         thrust_source=1e-300,
         burn_time=1e-10,
@@ -120,6 +126,57 @@ def test_short_burn_motor_lifts_off_with_default_max_time_step():
     )
 
 
+def _make_slow_core_motor():
+    # Gentle 2 s core burn that alone lifts the light rocket a little.
+    return SolidMotor(
+        thrust_source=[[0.0, 0.0], [0.05, 12.0], [1.9, 12.0], [2.0, 0.0]],
+        burn_time=2.0,
+        dry_mass=0.06,
+        dry_inertia=(9.0e-5, 9.0e-5, 9.0e-6),
+        center_of_dry_mass_position=0.06,
+        nozzle_position=0.0,
+        grain_number=1,
+        grain_density=1820.0,
+        grain_outer_radius=0.0104,
+        grain_initial_inner_radius=0.004,
+        grain_initial_height=0.05,
+        grain_separation=0.0,
+        grains_center_of_mass_position=0.06,
+        nozzle_radius=0.006,
+        throat_radius=0.003,
+        coordinate_system_orientation="nozzle_to_combustion_chamber",
+    )
+
+
+def _fly(motor):
+    rocket = _make_light_rocket(motor)
+    flight = Flight(
+        environment=Environment(),
+        rocket=rocket,
+        rail_length=2.0,
+        inclination=90,
+        heading=0,
+        terminate_on_apogee=True,
+        max_time_step=np.inf,
+    )
+    return flight.apogee
+
+
+def test_late_short_pulse_in_a_composite_is_not_skipped():
+    core = _make_slow_core_motor()
+    pulse = _make_short_burn_motor()
+    core_only = CompositeMotor([MotorPlacement(core, 0.0)])
+    with_pulse = CompositeMotor(
+        [MotorPlacement(core, 0.0), MotorPlacement(pulse, 0.0, ignition_delay=3.0)]
+    )
+
+    assert with_pulse.min_burn_duration == pulse.burn_duration
+    assert _fly(with_pulse) > _fly(core_only) + 100, (
+        "the 0.33 s pulse igniting at t=3 s added no altitude; "
+        "the solver stepped over it"
+    )
+
+
 def test_near_instant_burn_does_not_stall_solver():
     """A degenerate near-zero burn must not clamp max_step into a stall.
 
@@ -146,3 +203,16 @@ def test_near_instant_burn_does_not_stall_solver():
     # With the clamp skipped, max_time_step=1e-2 over max_time=2 s keeps the
     # solution bounded (~200 points). A regressed clamp would explode this.
     assert len(flight.solution) < 5000
+
+
+def test_placeholder_does_not_disable_composite_burn_clamp():
+    pulse = _make_short_burn_motor()
+    placeholder = _make_near_instant_burn_motor()
+    # No ballast from the placeholder, so only step selection differs.
+    placeholder.dry_mass = 0
+    placeholder.dry_I_11 = placeholder.dry_I_22 = placeholder.dry_I_33 = 0
+    composite = CompositeMotor(
+        [MotorPlacement(pulse, 0), MotorPlacement(placeholder, 0)]
+    )
+    assert composite.min_burn_duration == pulse.burn_duration
+    assert np.isclose(_fly(composite), _fly(pulse), rtol=0.01)

@@ -2,16 +2,13 @@
 import matplotlib.pyplot as plt
 import numpy as np
 
-from rocketpy.mathutils.function import Function
-from rocketpy.motors.motor import Motor
+from rocketpy.motors.composite_motor import CompositeMotor, MotorPlacement
 
 
-class ClusterMotor(Motor):
+class ClusterMotor(CompositeMotor):
     """
-    A class representing a cluster of N identical motors arranged symmetrically.
-
-    This class aggregates the physical properties (thrust, mass, inertia) of
-    multiple motors using the Parallel Axis Theorem (Huygens-Steiner theorem).
+    A cluster of N identical motors evenly spaced on a ring around the rocket
+    axis, all igniting together. A ``CompositeMotor`` with a ring layout.
 
     Attributes
     ----------
@@ -50,45 +47,17 @@ class ClusterMotor(Motor):
         self.motor = motor
         self.number = number
         self.radius = float(radius)
-        dry_inertia_cluster = self._calculate_dry_inertia()
 
-        # Use a thrust source scaled by the number of motors so that
-        # all thrust-derived quantities computed by the base Motor class
-        # correspond to the full cluster rather than a single motor.
-        scaled_thrust_source = motor.thrust * number
-
+        angles = np.linspace(0, 2 * np.pi, number, endpoint=False)
         super().__init__(
-            thrust_source=scaled_thrust_source,
-            nozzle_radius=motor.nozzle_radius,
-            burn_time=motor.burn_time,
-            dry_mass=motor.dry_mass * number,
-            dry_inertia=dry_inertia_cluster,
-            center_of_dry_mass_position=motor.center_of_dry_mass_position,
-            coordinate_system_orientation=motor.coordinate_system_orientation,
-            interpolation_method="linear",
+            MotorPlacement(
+                motor,
+                position=0.0,
+                lateral=(self.radius * np.cos(angle), self.radius * np.sin(angle)),
+            )
+            for angle in angles
         )
-
         self._setup_grain_properties()
-        self._propellant_mass = self.motor.propellant_mass * self.number
-        self._propellant_initial_mass = self.number * self.motor.propellant_initial_mass
-        self._center_of_propellant_mass = self.motor.center_of_propellant_mass
-        self._evaluate_propellant_inertia()
-
-    def _evaluate_propellant_inertia(self):
-        """Calculates the dynamic inertia of the propellant using Steiner's theorem."""
-        Ixx_term1 = self.motor.propellant_I_11 * self.number
-        Ixx_term2 = self.motor.propellant_mass * (0.5 * self.number * self.radius**2)
-        self._propellant_I_11 = Ixx_term1 + Ixx_term2
-        self._propellant_I_22 = self._propellant_I_11
-
-        Izz_term1 = self.motor.propellant_I_33 * self.number
-        Izz_term2 = self.motor.propellant_mass * (self.number * self.radius**2)
-        self._propellant_I_33 = Izz_term1 + Izz_term2
-
-        zero_func = Function(0)
-        self._propellant_I_12 = zero_func
-        self._propellant_I_13 = zero_func
-        self._propellant_I_23 = zero_func
 
     def _setup_grain_properties(self):
         """Copies the grain properties from the base motor."""
@@ -100,111 +69,11 @@ class ClusterMotor(Motor):
         self.grain_initial_height = self.motor.grain_initial_height
         self.grains_center_of_mass_position = self.motor.grains_center_of_mass_position
 
-    @property
-    def thrust(self):
-        return self._thrust
-
-    @thrust.setter
-    def thrust(self, value):
-        self._thrust = value
-
-    @property
-    def propellant_mass(self):
-        return self._propellant_mass
-
-    @propellant_mass.setter
-    def propellant_mass(self, value):
-        self._propellant_mass = value
-
-    @property
-    def propellant_initial_mass(self):
-        return self._propellant_initial_mass
-
-    @propellant_initial_mass.setter
-    def propellant_initial_mass(self, value):
-        self._propellant_initial_mass = value
-
-    @property
-    def center_of_propellant_mass(self):
-        return self._center_of_propellant_mass
-
-    @center_of_propellant_mass.setter
-    def center_of_propellant_mass(self, value):
-        self._center_of_propellant_mass = value
-
-    @property
-    def propellant_I_11(self):
-        return self._propellant_I_11
-
-    @propellant_I_11.setter
-    def propellant_I_11(self, value):
-        self._propellant_I_11 = value
-
-    @property
-    def propellant_I_22(self):
-        return self._propellant_I_22
-
-    @propellant_I_22.setter
-    def propellant_I_22(self, value):
-        self._propellant_I_22 = value
-
-    @property
-    def propellant_I_33(self):
-        return self._propellant_I_33
-
-    @propellant_I_33.setter
-    def propellant_I_33(self, value):
-        self._propellant_I_33 = value
-
-    @property
-    def propellant_I_12(self):
-        return self._propellant_I_12
-
-    @propellant_I_12.setter
-    def propellant_I_12(self, value):
-        self._propellant_I_12 = value
-
-    @property
-    def propellant_I_13(self):
-        return self._propellant_I_13
-
-    @propellant_I_13.setter
-    def propellant_I_13(self, value):
-        self._propellant_I_13 = value
-
-    @property
-    def propellant_I_23(self):
-        return self._propellant_I_23
-
-    @propellant_I_23.setter
-    def propellant_I_23(self, value):
-        self._propellant_I_23 = value
-
-    @property
-    def exhaust_velocity(self):
-        return self.motor.exhaust_velocity
-
-    def _calculate_dry_inertia(self):
-        Ixx_loc = self.motor.dry_I_11
-        Iyy_loc = self.motor.dry_I_22
-        Izz_loc = self.motor.dry_I_33
-        m_dry = self.motor.dry_mass
-
-        Izz_cluster = self.number * Izz_loc + self.number * m_dry * (self.radius**2)
-        Ixx_cluster = self.number * Ixx_loc + (self.number / 2) * m_dry * (
-            self.radius**2
-        )
-        Iyy_cluster = self.number * Iyy_loc + (self.number / 2) * m_dry * (
-            self.radius**2
-        )
-
-        return (Ixx_cluster, Iyy_cluster, Izz_cluster)
-
-    def info(self, *args, **kwargs):
+    def info(self, *, filename=None):
         print("Cluster Configuration:")
         print(f" - Motors: {self.number} x {type(self.motor).__name__}")
         print(f" - Radial Distance: {self.radius} m")
-        return self.motor.info(*args, **kwargs)
+        return self.motor.info(filename=filename)
 
     def draw_cluster_layout(self, rocket_radius=None, show=True):
         """Draw the geometric layout of the clustered motors."""
@@ -239,15 +108,11 @@ class ClusterMotor(Motor):
 
     def _draw_engines(self, ax):
         """Draws the individual engines of the cluster."""
-        motor_outer_radius = self.grain_outer_radius
-        angles = np.linspace(0, 2 * np.pi, self.number, endpoint=False)
-
-        for i, angle in enumerate(angles):
-            x = self.radius * np.cos(angle)
-            y = self.radius * np.sin(angle)
+        for i, placement in enumerate(self.placements):
+            x, y = placement.lateral
             motor_circle = plt.Circle(
                 (x, y),
-                motor_outer_radius,
+                self.grain_outer_radius,
                 color="red",
                 alpha=0.5,
                 label="Engine" if i == 0 else "",

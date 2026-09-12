@@ -2,15 +2,56 @@ import os
 from unittest.mock import MagicMock, patch
 
 import matplotlib.pyplot as plt
+import numpy as np
 import pytest
 from matplotlib.animation import FuncAnimation
 
+from rocketpy import CompositeMotor, MotorPlacement, Rocket
 from rocketpy.plots.compare import Compare
 from rocketpy.plots.plot_helpers import (
     show_or_save_animation,
     show_or_save_fig,
     show_or_save_plot,
 )
+
+
+@pytest.mark.parametrize("plane, lateral_axis", [("xz", 0), ("yz", 1)])
+def test_draw_composite_motor_placements(cesaroni_m1670, plane, lateral_axis):
+    motor = cesaroni_m1670
+    placements = [
+        MotorPlacement(motor, 0, (0.03, 0.01)),
+        MotorPlacement(motor, 0.8, (-0.02, -0.04)),
+    ]
+    rocket = Rocket(
+        radius=0.1,
+        mass=20,
+        inertia=(6, 6, 0.1),
+        power_off_drag=0.5,
+        power_on_drag=0.5,
+        center_of_mass_without_motor=1.5,
+    )
+    rocket.add_motor(CompositeMotor(placements), position=0.2)
+    rocket.add_nose(length=0.3, kind="ogive", position=2.5)
+    with patch("matplotlib.pyplot.show"):
+        rocket.draw(plane=plane)
+    fig = plt.gcf()
+    try:
+        ax = fig.axes[0]
+        motor_patches = [p for p in ax.patches if p.get_alpha() == 0.6]
+        # Each motor has five grains with two patches each (propellant and bore),
+        # plus one chamber and one nozzle.
+        assert len(motor_patches) == 24
+        points = np.concatenate(
+            [collection.get_offsets() for collection in ax.collections]
+        )
+        for placement in placements:
+            expected = (
+                0.2 + placement.position + motor.grains_center_of_mass_position,
+                placement.lateral[lateral_axis],
+            )
+            assert np.any(np.all(np.isclose(points, expected), axis=1))
+    finally:
+        plt.close(fig)
 
 
 @patch("matplotlib.pyplot.show")

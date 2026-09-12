@@ -803,6 +803,15 @@ class Rocket:
         self.dry_I_13 = self.I_13_without_motor + self.motor.dry_I_13
         self.dry_I_23 = self.I_23_without_motor + self.motor.dry_I_23
 
+        dry_moment_x, dry_moment_y = getattr(
+            self.motor, "dry_lateral_mass_moment", (0.0, 0.0)
+        )
+        # I_13 = -Σ m x (z - z_ref): moving z_ref from the motor's dry CM to the
+        # rocket CDM adds the noseward shift times Σ m x.
+        dry_reference_shift = -motor_center_of_dry_mass_to_CDM * self._csys
+        self.dry_I_13 += dry_reference_shift * dry_moment_x
+        self.dry_I_23 += dry_reference_shift * dry_moment_y
+
         return (
             self.dry_I_11,
             self.dry_I_22,
@@ -866,6 +875,14 @@ class Rocket:
         self.I_12 = self.dry_I_12 + self.motor.propellant_I_12
         self.I_13 = self.dry_I_13 + self.motor.propellant_I_13
         self.I_23 = self.dry_I_23 + self.motor.propellant_I_23
+
+        prop_moment_x, prop_moment_y = getattr(
+            self.motor, "propellant_lateral_mass_moment", (0.0, 0.0)
+        )
+        # Same shift as the dry term, from the propellant CM to the rocket CDM.
+        prop_reference_shift = CDM_to_CPM * self._csys
+        self.I_13 += prop_reference_shift * prop_moment_x
+        self.I_23 += prop_reference_shift * prop_moment_y
 
         # Return inertias
         return (

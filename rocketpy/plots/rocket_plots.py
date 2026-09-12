@@ -2,6 +2,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from rocketpy.motors import EmptyMotor, HybridMotor, LiquidMotor, SolidMotor
+from rocketpy.motors.composite_motor import MotorPlacement
 from rocketpy.rocket.aero_surface import Fins, NoseCone, Tail
 from rocketpy.rocket.aero_surface.generic_surface import GenericSurface
 
@@ -175,7 +176,8 @@ class _RocketPlots:
             https://matplotlib.org/stable/gallery/color/named_colors
         plane : str, optional
             Plane in which the rocket will be drawn. Default is 'xz'. Other
-            options is 'yz'. Used only for sensors representation.
+            option is 'yz'. Selects the lateral projection of motors, sensors,
+            and aerodynamic surfaces.
         filename : str | None, optional
             The path the plot should be saved to. By default None, in which case
             the plot will be shown instead of saved. Supported file endings are:
@@ -207,7 +209,7 @@ class _RocketPlots:
 
         drawn_surfaces = self._draw_aerodynamic_surfaces(ax, vis_args, plane)
         last_radius, last_x = self._draw_tubes(ax, drawn_surfaces, vis_args)
-        self._draw_motor(last_radius, last_x, ax, vis_args)
+        self._draw_motor(last_radius, last_x, ax, vis_args, plane)
         self._draw_rail_buttons(ax, vis_args)
         self._draw_center_of_mass_and_pressure(ax)
         self._draw_sensors(ax, self.rocket.sensors, plane)
@@ -417,109 +419,99 @@ class _RocketPlots:
             )
         return radius, last_x
 
-    def _draw_motor(self, last_radius, last_x, ax, vis_args):
-        """Draws the motor from motor patches"""
+    def _motor_placements(self):
+        """The rocket's motors as placements: a composite's own list, or the
+        single motor at the composite origin."""
+        motor = self.rocket.motor
+        return getattr(motor, "placements", None) or [MotorPlacement(motor, 0.0)]
+
+    def _draw_motor(self, last_radius, last_x, ax, vis_args, plane):
+        """Draws every placed motor from motor patches"""
         total_csys = self.rocket._csys * self.rocket.motor._csys
-        is_cluster = hasattr(self.rocket.motor, "number")
-        base_motor = self.rocket.motor.motor if is_cluster else self.rocket.motor
-
-        if is_cluster:
-            angles = np.linspace(0, 2 * np.pi, self.rocket.motor.number, endpoint=False)
-            y_offsets = self.rocket.motor.radius * np.cos(angles)
-        else:
-            y_offsets = [0]
-        nozzle_position = (
-            self.rocket.motor_position + base_motor.nozzle_position * total_csys
-        )
-        # Get motor patches translated to the correct position
-        motor_patches = self._generate_motor_patches(total_csys, ax)
-        # Draw patches
+        placements = self._motor_placements()
+        lateral_axis = 0 if plane == "xz" else 1
+        motor_patches = []
         if not isinstance(self.rocket.motor, EmptyMotor):
-            for y_off in y_offsets:
-                nozzle = base_motor.plots._generate_nozzle(
-                    translate=(nozzle_position, y_off), csys=self.rocket._csys
+            for index, placement in enumerate(placements):
+                origin = self.rocket.motor_position + placement.position * total_csys
+                y_off = placement.lateral[lateral_axis]
+                patches = self._generate_motor_patches(
+                    placement.motor, origin, y_off, total_csys, ax, index == 0
                 )
-                if y_off != y_offsets[0]:
+                nozzle = placement.motor.plots._generate_nozzle(
+                    translate=(
+                        origin + placement.motor.nozzle_position * total_csys,
+                        y_off,
+                    ),
+                    csys=self.rocket._csys,
+                )
+                if index > 0:
                     nozzle.set_label("_nolegend_")
-                motor_patches.append(nozzle)
-
-            outline = base_motor.plots._generate_motor_region(
-                list_of_patches=motor_patches
-            )
-            if not is_cluster:
-                ax.add_patch(outline)
+                patches.append(nozzle)
+                if len(placements) == 1:
+                    ax.add_patch(
+                        placement.motor.plots._generate_motor_region(
+                            list_of_patches=patches
+                        )
+                    )
+                motor_patches += patches
 
             for patch in motor_patches:
-                if is_cluster:
+                if len(placements) > 1:
                     patch.set_alpha(0.6)
                 ax.add_patch(patch)
-        self._draw_nozzle_tube(last_radius, last_x, nozzle_position, ax, vis_args)
+        self._draw_nozzle_tube(
+            last_radius, last_x, self.rocket.nozzle_position, ax, vis_args
+        )
 
-    def _generate_motor_patches(self, total_csys, ax):  # pylint: disable=unused-argument
-        """Generates motor patches for drawing"""
+    def _generate_motor_patches(self, motor, origin, y_off, total_csys, ax, labeled):  # pylint: disable=too-many-arguments
+        """Generates the patches of one motor whose origin sits at ``origin``
+        along the axis and ``y_off`` off it; only the first motor is labeled."""
         motor_patches = []
 
-        is_cluster = hasattr(self.rocket.motor, "number")
-        base_motor = self.rocket.motor.motor if is_cluster else self.rocket.motor
-
-        if isinstance(base_motor, SolidMotor):
-            y_offsets = (
-                self.rocket.motor.radius
-                * np.cos(
-                    np.linspace(0, 2 * np.pi, self.rocket.motor.number, endpoint=False)
-                )
-                if is_cluster
-                else [0]
-            )
+        if isinstance(motor, SolidMotor):
             grains_cm_position = (
-                self.rocket.motor_position
-                + base_motor.grains_center_of_mass_position * total_csys
-            )
-            for y_off in y_offsets:
-                ax.scatter(
-                    grains_cm_position,
-                    y_off,
-                    color="brown",
-                    label="Grains Center of Mass" if y_off == y_offsets[0] else "",
-                    s=8,
-                    zorder=10,
-                )
-
-                chamber = base_motor.plots._generate_combustion_chamber(
-                    translate=(grains_cm_position, y_off), label=None
-                )
-                grains = base_motor.plots._generate_grains(
-                    translate=(grains_cm_position, y_off)
-                )
-                if y_off != y_offsets[0]:
-                    for grain in grains:
-                        grain.set_label("_nolegend_")
-
-                motor_patches += [chamber, *grains]
-
-        elif isinstance(self.rocket.motor, HybridMotor):
-            grains_cm_position = (
-                self.rocket.motor_position
-                + self.rocket.motor.grains_center_of_mass_position * total_csys
+                origin + motor.grains_center_of_mass_position * total_csys
             )
             ax.scatter(
                 grains_cm_position,
-                0,
+                y_off,
                 color="brown",
-                label="Grains Center of Mass",
+                label="Grains Center of Mass" if labeled else "",
                 s=8,
                 zorder=10,
             )
 
-            tanks_and_centers = self.rocket.motor.plots._generate_positioned_tanks(
-                translate=(self.rocket.motor_position, 0), csys=total_csys
+            chamber = motor.plots._generate_combustion_chamber(
+                translate=(grains_cm_position, y_off), label=None
             )
-            chamber = self.rocket.motor.plots._generate_combustion_chamber(
-                translate=(grains_cm_position, 0), label=None
+            grains = motor.plots._generate_grains(translate=(grains_cm_position, y_off))
+            if not labeled:
+                for grain in grains:
+                    grain.set_label("_nolegend_")
+
+            motor_patches += [chamber, *grains]
+
+        elif isinstance(motor, HybridMotor):
+            grains_cm_position = (
+                origin + motor.grains_center_of_mass_position * total_csys
             )
-            grains = self.rocket.motor.plots._generate_grains(
-                translate=(grains_cm_position, 0)
+            ax.scatter(
+                grains_cm_position,
+                y_off,
+                color="brown",
+                label="Grains Center of Mass" if labeled else "",
+                s=8,
+                zorder=10,
             )
+
+            tanks_and_centers = motor.plots._generate_positioned_tanks(
+                translate=(origin, y_off), csys=total_csys
+            )
+            chamber = motor.plots._generate_combustion_chamber(
+                translate=(grains_cm_position, y_off), label=None
+            )
+            grains = motor.plots._generate_grains(translate=(grains_cm_position, y_off))
             motor_patches += [chamber, *grains]
             for tank, center in tanks_and_centers:
                 ax.scatter(
@@ -532,9 +524,9 @@ class _RocketPlots:
                 )
                 motor_patches += [tank]
 
-        elif isinstance(self.rocket.motor, LiquidMotor):
-            tanks_and_centers = self.rocket.motor.plots._generate_positioned_tanks(
-                translate=(self.rocket.motor_position, 0), csys=total_csys
+        elif isinstance(motor, LiquidMotor):
+            tanks_and_centers = motor.plots._generate_positioned_tanks(
+                translate=(origin, y_off), csys=total_csys
             )
             for tank, center in tanks_and_centers:
                 ax.scatter(
