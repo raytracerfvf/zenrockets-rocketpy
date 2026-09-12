@@ -8,6 +8,7 @@ from .mathutils import (
 )
 from .motors import (
     ClusterMotor,
+    CompositeMotor,
     CylindricalTank,
     EmptyMotor,
     Fluid,
@@ -18,6 +19,7 @@ from .motors import (
     MassBasedTank,
     MassFlowRateBasedTank,
     Motor,
+    MotorPlacement,
     PointMassMotor,
     SolidMotor,
     SphericalTank,

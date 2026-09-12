@@ -20,6 +20,9 @@ from ..tools import parallel_axis_theorem_from_com, tuple_handler
 # ThrustCurve API cache
 CACHE_DIR = Path.home() / ".rocketpy_cache"
 
+# Smallest solver max_step the burn-phase clamp may impose, in seconds.
+MIN_BURN_CLAMP_STEP = 1e-6
+
 
 class Motor(ABC):
     """Abstract class to specify characteristics and useful operations for
@@ -1170,7 +1173,7 @@ class Motor(ABC):
 
         return self.thrust + self.reference_pressure * self.nozzle_area
 
-    def pressure_thrust(self, pressure):
+    def pressure_thrust(self, pressure, t=None):  # pylint: disable=unused-argument
         """Computes the contribution to thrust due to the difference between
         the atmospheric pressure and the reference pressure at which the
         thrust data was recorded.
@@ -1179,6 +1182,9 @@ class Motor(ABC):
         ----------
         pressure : float
             Atmospheric pressure in Pa.
+        t : float, optional
+            Time in seconds. Ignored for a single motor; composite motors use
+            it to select active sub-motors.
 
         Returns
         -------

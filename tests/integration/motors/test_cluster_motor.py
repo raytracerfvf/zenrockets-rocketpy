@@ -74,9 +74,9 @@ def test_cluster_dry_inertia_steiner_theorem(base_motor):
     Tests the implementation of the Parallel Axis Theorem (Huygens-Steiner)
     for the static (dry) mass of the cluster.
 
-    Theoretical Formulas:
+    Theoretical Formulas (exact for an evenly spaced ring of N >= 3 motors):
     I_zz_cluster = N * I_zz_local + N * m * R^2
-    I_xx_cluster = N * I_xx_local + (N/2) * m * R^2  (Radial symmetry approximation)
+    I_xx_cluster = N * I_xx_local + (N/2) * m * R^2
     """
     N = 3
     R = 1.0  # 1 meter radius for simpler checking
@@ -102,7 +102,7 @@ def test_cluster_propellant_inertia_dynamic(base_motor):
     Tests if the Steiner theorem is correctly applied dynamically
     to the changing propellant mass over time.
     """
-    N = 2
+    N = 4
     R = 0.5
     cluster = ClusterMotor(motor=base_motor, number=N, radius=R)
 

@@ -12,6 +12,7 @@ from rocketpy.simulation.flight_data_exporter import FlightDataExporter
 
 from ..mathutils.function import Function, funcify_method
 from ..mathutils.vector_matrix import Matrix, Vector
+from ..motors.motor import MIN_BURN_CLAMP_STEP
 from ..motors.point_mass_motor import PointMassMotor
 from ..plots.flight_plots import _FlightPlots
 from ..prints.flight_prints import _FlightPrints
@@ -36,12 +37,6 @@ ODE_SOLVER_MAP = {
     "BDF": BDF,
     "LSODA": LSODA,
 }
-
-# Smallest burn-phase max_step the clamp is allowed to impose, in seconds.
-# Real motors burn far longer than ~10 us (so burn_out/10 stays well above this),
-# while degenerate/placeholder motors (e.g. burn_out_time=1e-10 s) would otherwise
-# clamp max_step to ~1e-11 s and stall the integrator for the whole phase.
-MIN_BURN_CLAMP_STEP = 1e-6
 
 
 # pylint: disable=too-many-public-methods
@@ -679,16 +674,17 @@ class Flight:
             # Create solver for this flight phase
             self.function_evaluations.append(0)
 
-            # Adaptive solvers can step over an impulsive burn entirely when
-            # thrust is zero at both endpoints; clamp during the burn phase only.
-            # Degenerate burns (burn_out/10 below MIN_BURN_CLAMP_STEP, or below the
-            # user's min_time_step) are skipped so the clamp can't drive max_step to
-            # an unusably small value and stall the integrator for the whole phase.
+            # Adaptive solvers can step over an impulsive burn when thrust is zero
+            # at both endpoints, so phases starting before burnout clamp max_step
+            # to a tenth of the shortest burn. The clamp is chosen per phase and
+            # persists until the next event. Degenerate burns are skipped so the
+            # step cannot collapse and stall the integrator.
             phase_max_step = self.max_time_step
             motor = self.rocket.motor
             burn_out = float(getattr(motor, "burn_out_time", 0) or 0)
             total_impulse = float(getattr(motor, "total_impulse", 0) or 0)
-            burn_max_step = burn_out / 10
+            shortest_burn = float(getattr(motor, "min_burn_duration", 0) or burn_out)
+            burn_max_step = shortest_burn / 10
             if (
                 total_impulse > 0
                 and phase.t < burn_out
@@ -1834,7 +1830,7 @@ class Flight:
         pressure = self.env.pressure.get_value_opt(z)
         net_thrust = max(
             self.rocket.motor.thrust.get_value_opt(t)
-            + self.rocket.motor.pressure_thrust(pressure),
+            + self.rocket.motor.pressure_thrust(pressure, t),
             0,
         )
         R3 = -0.5 * rho * (free_stream_speed**2) * self.rocket.area * (drag_coeff)
@@ -1932,7 +1928,7 @@ class Flight:
 
             net_thrust = max(
                 self.rocket.motor.thrust.get_value_opt(t)
-                + self.rocket.motor.pressure_thrust(pressure),
+                + self.rocket.motor.pressure_thrust(pressure, t),
                 0,
             )
             # Off center moment
@@ -2346,7 +2342,7 @@ class Flight:
             pressure = self.env.pressure.get_value_opt(z)
             net_thrust = max(
                 self.rocket.motor.thrust.get_value_opt(t)
-                + self.rocket.motor.pressure_thrust(pressure),
+                + self.rocket.motor.pressure_thrust(pressure, t),
                 0,
             )
         else:
@@ -2534,7 +2530,7 @@ class Flight:
             pressure = self.env.pressure.get_value_opt(z)
             net_thrust = max(
                 self.rocket.motor.thrust.get_value_opt(t)
-                + self.rocket.motor.pressure_thrust(pressure),
+                + self.rocket.motor.pressure_thrust(pressure, t),
                 0,
             )
             drag_coeff = self.rocket.power_on_drag_7d(
